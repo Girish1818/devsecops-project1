@@ -1,0 +1,28 @@
+rules:
+  - id: hardcoded-flask-secret-key
+    # What this rule does:
+    # Detects when Flask's secret_key is assigned a hardcoded string literal.
+    # A hardcoded secret key means anyone who reads your source code can
+    # forge session cookies and bypass authentication entirely.
+    # The fix is to load it from an environment variable or secrets manager.
+    
+    patterns:
+      # Pattern 1: find any assignment to app.secret_key
+      - pattern: $APP.secret_key = "$SECRET"
+      # Pattern 2: but only when $SECRET is not loaded from environment
+      - pattern-not: $APP.secret_key = os.environ.get(...)
+      - pattern-not: $APP.secret_key = os.getenv(...)
+
+    message: |
+      Hardcoded Flask secret key detected in '$SECRET'.
+      Secret keys must never be hardcoded in source code.
+      Load from environment: app.secret_key = os.environ.get('SECRET_KEY')
+      Or use AWS Secrets Manager (which we configure in Day 3).
+
+    languages: [python]
+    severity: ERROR
+
+    metadata:
+      category: security
+      cwe: CWE-798
+      owasp: A07:2021 - Identification and Authentication Failures
