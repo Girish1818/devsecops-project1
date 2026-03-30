@@ -12,6 +12,9 @@ app = Flask(__name__)
 # Who catches it: Semgrep + Gitleaks
 app.secret_key = "super-secret-hardcoded-key-123"
 
+# Simulate a developer accidentally committing AWS credentials
+
+
 def get_db():
     # Flask's g object lives for exactly one request then is destroyed.
     # Each request gets its own SQLite connection, created in its own
