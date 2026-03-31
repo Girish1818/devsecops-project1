@@ -1,52 +1,35 @@
-# Name appears in GitHub Actions UI — keep it descriptive
 name: DevSecOps Security Pipeline
 
-# on: defines what triggers this pipeline
-# push to main = runs when you push code directly to main
-# pull_request to main = runs when someone opens a PR targeting main
-# This means every code change gets scanned before it can merge
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
 
-# permissions: controls what the GitHub Actions runner is allowed to do
-# contents: read = can read your repo files (needed for checkout)
-# security-events: write = can upload SARIF results to GitHub Security tab
-# id-token: write = needed later for OIDC authentication with AWS
 permissions:
   contents: read
   security-events: write
   id-token: write
 
+# env: sets variables available to all jobs
+# We define our AWS config here once rather than repeating in every job
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: devsecops-project1
+
 jobs:
 
   # ─────────────────────────────────────────────
-  # JOB 1: SAST — Semgrep static analysis
-  # Scans your Python code for vulnerability patterns
+  # JOB 1: SAST — Semgrep
   # ─────────────────────────────────────────────
   sast:
     name: SAST — Semgrep
-    # runs-on: which machine to use
-    # ubuntu-latest = a fresh Ubuntu VM spun up by GitHub for each run
-    # It's destroyed after the job finishes — clean slate every time
     runs-on: ubuntu-latest
-
     steps:
-      # Step 1: Checkout
-      # actions/checkout downloads your repo code onto the runner VM
-      # Without this, the runner has no files to scan
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # Step 2: Run Semgrep
-      # We install and run Semgrep directly — no third-party action needed
-      # --config=auto selects rules automatically for detected languages
-      # --sarif outputs results in standard format GitHub understands
-      # --output sends results to a file we save as an artifact
-      # || true prevents the step from failing here — we control failure below
-      - name: Run Semgrep SAST scan
+      - name: Run Semgrep scan
         run: |
           pip install semgrep
           semgrep --config=auto \
@@ -54,66 +37,42 @@ jobs:
                   --output=semgrep.sarif \
                   app/ || true
 
-      # Step 3: Upload SARIF to GitHub Security tab
-      # This makes findings appear as inline annotations on your code
-      # in the GitHub Security → Code Scanning tab
-      - name: Upload Semgrep results to GitHub Security
+      - name: Upload SARIF to GitHub Security
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: semgrep.sarif
-        # if: always() means this runs even if previous step failed
-        # We want results uploaded regardless so we can see what failed
         if: always()
 
-      # Step 4: The actual gate — fail the job if blocking findings exist
-      # We re-run Semgrep without --sarif for the exit code check
-      # exit-code 1 means "fail if any findings found"
       - name: Enforce Semgrep gate
         run: |
           pip install semgrep
-          semgrep --config=auto \
-                  --error \
-                  app/
+          semgrep --config=auto --error app/
 
   # ─────────────────────────────────────────────
-  # JOB 2: SCA — Trivy container and dependency scan
-  # Scans your Docker image for CVEs
+  # JOB 2: SCA — Trivy
   # ─────────────────────────────────────────────
   sca:
     name: SCA — Trivy
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # Build the Docker image on the runner
-      # The runner has Docker pre-installed — no setup needed
       - name: Build Docker image
         run: docker build -t vulnapp:${{ github.sha }} .
-        # github.sha = the commit hash of the current push
-        # Tagging with SHA means every image is traceable to an exact commit
-        # e.g. vulnapp:98eb172... — you can always find what code produced this image
 
-      # Run Trivy image scan — output JSON for our gate script
       - name: Run Trivy image scan
         uses: aquasecurity/trivy-action@master
         with:
           image-ref: vulnapp:${{ github.sha }}
           format: json
           output: trivy-results.json
-          # Don't exit here — let our gate script decide
           exit-code: '0'
 
-      # Run our Python gate script from Day 1
-      # This is the script YOU wrote — now it's running in the cloud
       - name: Enforce Trivy gate
         run: python3 trivy-check.py trivy-results.json
 
-      # Save the JSON file as a pipeline artifact
-      # Artifacts persist after the job finishes — you can download them
-      # In Project 2 we will fetch these artifacts and send them to Splunk
-      - name: Upload Trivy results as artifact
+      - name: Upload Trivy results
         uses: actions/upload-artifact@v4
         with:
           name: trivy-results
@@ -121,48 +80,32 @@ jobs:
         if: always()
 
   # ─────────────────────────────────────────────
-  # JOB 3: Secrets detection — Gitleaks
-  # Scans git history for accidentally committed secrets
+  # JOB 3: Secrets — Gitleaks
   # ─────────────────────────────────────────────
   secrets:
     name: Secrets — Gitleaks
     runs-on: ubuntu-latest
-
     steps:
-      # fetch-depth: 0 means fetch the ENTIRE git history
-      # By default actions/checkout only fetches the latest commit
-      # Gitleaks needs full history to scan all previous commits for secrets
       - name: Checkout full history
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      # Use the official Gitleaks action
-      # It automatically uses your .gitleaks.toml custom rules
       - name: Run Gitleaks scan
         uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # GITHUB_TOKEN is automatically provided by GitHub Actions
-          # It's a temporary token scoped to this repo for this run only
-          # Gitleaks uses it to post findings as PR comments
 
   # ─────────────────────────────────────────────
-  # JOB 4: IaC security — Checkov
-  # Scans Terraform for cloud misconfigurations
+  # JOB 4: IaC — Checkov
   # ─────────────────────────────────────────────
   iac:
     name: IaC — Checkov
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # Run Checkov on the terraform/ directory
-      # --soft-fail means it reports findings but doesn't fail yet
-      # We use soft-fail here because terraform/ is currently empty
-      # Once we add Terraform in Day 3, we remove --soft-fail
       - name: Run Checkov IaC scan
         uses: bridgecrewio/checkov-action@master
         with:
@@ -172,24 +115,88 @@ jobs:
 
   # ─────────────────────────────────────────────
   # JOB 5: Deploy gate
-  # Only runs if ALL four security jobs pass
-  # This is the enforcement point — nothing deploys past a failed scan
+  # All security jobs must pass before this runs
   # ─────────────────────────────────────────────
   deploy-gate:
     name: Deploy gate
     runs-on: ubuntu-latest
-    # needs: lists which jobs must succeed before this one starts
-    # If ANY of sast, sca, secrets, iac fail — this job never runs
     needs: [sast, sca, secrets, iac]
-
     steps:
       - name: All security checks passed
         run: |
-          echo "All security gates passed successfully."
-          echo "SAST: Semgrep found no blocking issues"
-          echo "SCA:  Trivy found no CRITICAL CVEs"
-          echo "Secrets: Gitleaks found no leaked credentials"
-          echo "IaC: Checkov scan completed"
-          echo ""
-          echo "Image is cleared for deployment to ECR."
-          echo "Deploy step will be added in Day 3."
+          echo "All security gates passed."
+          echo "Proceeding to build and push to ECR."
+
+  # ─────────────────────────────────────────────
+  # JOB 6: Build and push to ECR
+  # Only runs after deploy-gate passes
+  # Uses OIDC — no stored AWS credentials anywhere
+  # ─────────────────────────────────────────────
+  build-and-push:
+    name: Build and push to ECR
+    runs-on: ubuntu-latest
+    # This job only runs after deploy-gate succeeds
+    # Which means all 4 security scans passed
+    needs: [deploy-gate]
+
+    # Only push on direct pushes to main
+    # Don't push on pull requests — PRs are for scanning only
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # OIDC authentication step
+      # This is the magic — no stored credentials needed
+      # aws-actions/configure-aws-credentials handles the JWT exchange:
+      # 1. Requests a JWT from GitHub's OIDC endpoint
+      # 2. Sends it to AWS STS with your role ARN
+      # 3. AWS verifies the JWT matches your trust policy conditions
+      # 4. AWS returns temporary credentials (1 hour expiry)
+      # 5. Those credentials are set as environment variables for this job
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/GitHubActions-DevSecOps
+          aws-region: ${{ env.AWS_REGION }}
+          # role-session-name appears in CloudTrail logs
+          # Using the commit SHA means every AWS action is traceable
+          # to the exact commit that triggered it
+          role-session-name: github-actions-${{ github.sha }}
+
+      # Login to ECR using the temporary credentials from OIDC
+      # amazon-ecr-login runs: aws ecr get-login-password | docker login
+      # It uses the temporary credentials automatically
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # Build, tag with commit SHA, and push
+      # Using commit SHA as tag means:
+      # - Every image is traceable to an exact commit
+      # - You can roll back to any previous image by SHA
+      # - No ambiguity about what code is in which image
+      - name: Build, tag and push image to ECR
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        run: |
+          IMAGE_URI=$ECR_REGISTRY/$ECR_REPOSITORY:${{ github.sha }}
+
+          echo "Building image: $IMAGE_URI"
+          docker build -t $IMAGE_URI .
+
+          echo "Pushing to ECR..."
+          docker push $IMAGE_URI
+
+          echo "Image pushed successfully: $IMAGE_URI"
+          echo "image-uri=$IMAGE_URI" >> $GITHUB_OUTPUT
+
+      # Verify the push succeeded by checking ECR
+      - name: Verify image in ECR
+        run: |
+          aws ecr describe-images \
+            --repository-name $ECR_REPOSITORY \
+            --region $AWS_REGION \
+            --query 'imageDetails[*].{tags:imageTags,pushed:imagePushedAt}' \
+            --output table

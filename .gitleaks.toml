@@ -1,0 +1,45 @@
+# .gitleaks.toml — custom secret detection rules
+# Gitleaks reads this file automatically when it runs.
+# Each [[rules]] block defines one pattern to detect.
+
+[[rules]]
+id = "flask-hardcoded-secret"
+# What this rule does:
+# Catches hardcoded Flask secret keys.
+# The pattern looks for secret_key assigned any quoted string value.
+# In real code this should always come from an environment variable.
+description = "Hardcoded Flask secret_key detected"
+regex = '''secret_key\s*=\s*["'][^"']{8,}["']'''
+# regex breakdown:
+# secret_key  — literal text
+# \s*=\s*     — equals sign with optional spaces around it
+# ["']        — opening quote (single or double)
+# [^"']{8,}   — any characters except quotes, 8 or more (avoids empty strings)
+# ["']        — closing quote
+severity = "ERROR"
+tags = ["flask", "secret", "hardcoded"]
+
+[[rules]]
+id = "aws-access-key-custom"
+# Catches anything that looks like an AWS access key ID.
+# AWS access key IDs always start with AKIA followed by 16 uppercase chars.
+description = "AWS Access Key ID detected"
+regex = '''AKIA[0-9A-Z]{16}'''
+severity = "ERROR"
+tags = ["aws", "credentials"]
+
+[[rules]]
+id = "aws-secret-key-custom"
+# Catches variable assignments that look like AWS secret keys.
+# Looks for AWS_SECRET variable names assigned a long alphanumeric string.
+description = "AWS Secret Access Key detected"
+regex = '''AWS_SECRET[_A-Z]*\s*=\s*["'][0-9a-zA-Z/+=]{20,}["']'''
+# regex breakdown:
+# AWS_SECRET      — must start with this prefix
+# [_A-Z]*         — optional suffix like _ACCESS_KEY
+# \s*=\s*         — assignment operator
+# ["']            — opening quote
+# [0-9a-zA-Z/+=]{20,} — at least 20 base64-like characters
+# ["']            — closing quote
+severity = "ERROR"
+tags = ["aws", "credentials"]

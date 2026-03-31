@@ -5,12 +5,40 @@ import os
 
 app = Flask(__name__)
 
-# VULNERABILITY 1 — Hardcoded secret key
-# What it is: Flask uses secret_key to sign session cookies.
-# If an attacker knows this value they can forge any session,
-# bypassing your entire authentication system.
-# Who catches it: Semgrep + Gitleaks
-app.secret_key = "super-secret-hardcoded-key-123"
+import boto3
+import json
+
+def get_secret(secret_name: str, region: str = "us-east-1") -> str:
+    # boto3 is the AWS SDK for Python
+    # It reads credentials automatically from:
+    # 1. Environment variables (AWS_ACCESS_KEY_ID etc.)
+    # 2. ~/.aws/credentials file (your local machine)
+    # 3. IAM role attached to the running environment (EC2, Lambda, ECS)
+    # 4. OIDC temporary credentials injected by GitHub Actions
+    # We never pass credentials explicitly — boto3 finds them automatically
+    # This is called the "credential provider chain"
+    client = boto3.client("secretsmanager", region_name=region)
+
+    try:
+        response = client.get_secret_value(SecretId=secret_name)
+        # get_secret_value returns either SecretString (text)
+        # or SecretBinary (binary data like certificates)
+        # Ours is a plain string so we use SecretString
+        return response["SecretString"]
+    except Exception as e:
+        # If we can't reach Secrets Manager (no AWS access, wrong permissions)
+        # fall back to an environment variable for local development
+        # This means developers can run the app locally without AWS access
+        # by setting the SECRET_KEY env var in their shell
+        print(f"Warning: Could not fetch secret from AWS: {e}")
+        import os
+        fallback = os.environ.get("FLASK_SECRET_KEY", "local-dev-only-not-for-production")
+        print("Using fallback secret — DO NOT use in production")
+        return fallback
+
+# Fetch the secret at app startup — not hardcoded, not in source code
+# The secret name matches exactly what we created in Secrets Manager
+app.secret_key = get_secret("devsecops-project1/flask-secret-key")
 
 # Simulate a developer accidentally committing AWS credentials
 
