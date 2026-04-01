@@ -1,54 +1,31 @@
 from flask import Flask, request, g
 import sqlite3
 import subprocess
+import shlex
 import os
+import boto3
 
 app = Flask(__name__)
 
-import boto3
-import json
-
+# SECRET KEY — fetched from AWS Secrets Manager at runtime
+# Never hardcoded. boto3 uses the credential provider chain:
+# 1. Local: ~/.aws/credentials (your Mac)
+# 2. CI/CD: OIDC temporary credentials from GitHub Actions
+# 3. Fallback: environment variable for local dev without AWS
 def get_secret(secret_name: str, region: str = "us-east-1") -> str:
-    # boto3 is the AWS SDK for Python
-    # It reads credentials automatically from:
-    # 1. Environment variables (AWS_ACCESS_KEY_ID etc.)
-    # 2. ~/.aws/credentials file (your local machine)
-    # 3. IAM role attached to the running environment (EC2, Lambda, ECS)
-    # 4. OIDC temporary credentials injected by GitHub Actions
-    # We never pass credentials explicitly — boto3 finds them automatically
-    # This is called the "credential provider chain"
     client = boto3.client("secretsmanager", region_name=region)
-
     try:
         response = client.get_secret_value(SecretId=secret_name)
-        # get_secret_value returns either SecretString (text)
-        # or SecretBinary (binary data like certificates)
-        # Ours is a plain string so we use SecretString
         return response["SecretString"]
     except Exception as e:
-        # If we can't reach Secrets Manager (no AWS access, wrong permissions)
-        # fall back to an environment variable for local development
-        # This means developers can run the app locally without AWS access
-        # by setting the SECRET_KEY env var in their shell
         print(f"Warning: Could not fetch secret from AWS: {e}")
-        import os
         fallback = os.environ.get("FLASK_SECRET_KEY", "local-dev-only-not-for-production")
         print("Using fallback secret — DO NOT use in production")
         return fallback
 
-# Fetch the secret at app startup — not hardcoded, not in source code
-# The secret name matches exactly what we created in Secrets Manager
 app.secret_key = get_secret("devsecops-project1/flask-secret-key")
 
-# Simulate a developer accidentally committing AWS credentials
-
-
 def get_db():
-    # Flask's g object lives for exactly one request then is destroyed.
-    # Each request gets its own SQLite connection, created in its own
-    # thread. This satisfies SQLite's thread-safety requirement.
-    # Without this, a global DB connection gets shared across threads
-    # and SQLite throws the error you saw earlier.
     if "db" not in g:
         conn = sqlite3.connect(":memory:")
         conn.execute(
@@ -63,8 +40,6 @@ def get_db():
 
 @app.teardown_appcontext
 def close_db(error):
-    # Flask calls this automatically when the request ends.
-    # It closes the DB connection cleanly so memory is freed.
     db = g.pop("db", None)
     if db is not None:
         db.close()
@@ -75,31 +50,45 @@ def index():
 
 @app.route("/user")
 def get_user():
-    # VULNERABILITY 2 — SQL Injection
-    # The username from the URL is pasted directly into the SQL string.
-    # Attacker sends: username=' OR '1'='1
-    # Query becomes: SELECT * FROM users WHERE username = '' OR '1'='1'
-    # '1'='1' is always true — every row matches — full DB returned.
-    # Real world impact: data breach, authentication bypass.
-    # Who catches it: Semgrep (python.flask.security.injection rule)
+    # FIX for SQL Injection — parameterised query
+    # The ? placeholder tells SQLite to treat the value as data, never as SQL.
+    # No matter what the user sends, it cannot break out of the string context.
+    # Before: "SELECT * FROM users WHERE username = '" + username + "'"
+    # After:  "SELECT * FROM users WHERE username = ?"  with (username,) separate
+    # The database driver handles escaping — you never touch the SQL string.
     username = request.args.get("username", "")
-    query = "SELECT * FROM users WHERE username = '" + username + "'"
-    cursor = get_db().execute(query)
+    query = "SELECT * FROM users WHERE username = ?"
+    cursor = get_db().execute(query, (username,))
     rows = cursor.fetchall()
     return str(rows)
 
 @app.route("/run")
 def run_command():
-    # VULNERABILITY 3 — Command Injection via shell=True
-    # cmd parameter passed directly to the shell.
-    # Attacker sends: cmd=ls;cat /etc/passwd
-    # shell=True hands the entire string to /bin/sh unchanged.
-    # Both commands execute — yours and theirs.
-    # Real world impact: full remote code execution on the server.
-    # Who catches it: Semgrep (subprocess-shell-true rule)
-    cmd = request.args.get("cmd", "echo hello")
-    result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+    # FIX for Command Injection — allowlist + shell=False
+    # shell=False means Python executes the command directly without /bin/sh
+    # No shell means no chaining with ; && || — each argument is literal
+    # The allowlist restricts which commands are permitted at all
+    # An attacker sending "ls;cat /etc/passwd" gets "command not allowed"
+    ALLOWED_COMMANDS = ["ls", "pwd", "whoami", "date"]
+    cmd = request.args.get("cmd", "ls")
+
+    if cmd not in ALLOWED_COMMANDS:
+        return f"Command not allowed. Permitted: {', '.join(ALLOWED_COMMANDS)}", 403
+
+    # shlex.split safely tokenises the command string into a list
+    # shell=False means each token is passed as a literal argument
+   result = subprocess.run(  # nosemgrep: python.flask.security.injection.subprocess-injection.subprocess-injection,python.lang.security.dangerous-subprocess-use.dangerous-subprocess-use
+        shlex.split(cmd),
+        shell=False,
+        capture_output=True,
+        text=True
+    )
     return result.stdout
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    # FIX for Flask misconfigs:
+    # host="127.0.0.1" binds to localhost only — not publicly exposed
+    # debug=False — no interactive debugger in production
+    # In production this file is not called directly — a WSGI server
+    # like gunicorn runs the app. This block is for local dev only.
+    app.run(host="127.0.0.1", port=5000, debug=False)
