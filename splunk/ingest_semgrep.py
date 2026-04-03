@@ -50,7 +50,7 @@ def main():
     findings = runs[0].get('results', [])
     print(f"Total findings: {len(findings)}")
 
-    scan_time = datetime.utcnow().isoformat()
+    scan_time = datetime.now().isoformat()
     events_built = []
 
     for result in findings:
@@ -80,8 +80,11 @@ def main():
         }
         events_built.append(event)
 
-    print(f"\nFirst event sample:")
-    print(json.dumps(events_built[0], indent=2))
+    if events_built:
+        print(f"\nFirst event sample:")
+        print(json.dumps(events_built[0], indent=2))
+    else:
+        print("No findings to send — scan came back clean.")
 
     print(f"\nSending {len(events_built)} events to Splunk...")
     sent = 0
