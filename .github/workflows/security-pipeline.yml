@@ -22,7 +22,7 @@ jobs:
   # ─────────────────────────────────────────────
   # JOB 1: SAST — Semgrep
   # ─────────────────────────────────────────────
-  sast:
+sast:
     name: SAST — Semgrep
     runs-on: ubuntu-latest
     steps:
@@ -41,6 +41,13 @@ jobs:
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: semgrep.sarif
+        if: always()
+
+      - name: Save Semgrep SARIF as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: semgrep-results
+          path: semgrep.sarif
         if: always()
 
       - name: Enforce Semgrep gate
@@ -200,3 +207,75 @@ jobs:
             --region $AWS_REGION \
             --query 'imageDetails[*].{tags:imageTags,pushed:imagePushedAt}' \
             --output table
+
+  # ─────────────────────────────────────────────
+  # JOB 7: Splunk ingestion
+  # Downloads scanner artifacts and sends findings
+  # to Splunk HEC automatically after every scan
+  # ─────────────────────────────────────────────
+  splunk-ingest:
+    name: Splunk — ingest findings
+    runs-on: ubuntu-latest
+    # Runs after all four security scans complete
+    # We use if: always() so this job runs even if
+    # scans fail — we want failed scan data in Splunk too
+    # That's how you track what was blocked and why
+    needs: [sast, sca, secrets, iac]
+    if: always()
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Download Trivy JSON artifact saved by the SCA job
+      # actions/download-artifact fetches files saved by
+      # actions/upload-artifact in a previous job
+      - name: Download Trivy results
+        uses: actions/download-artifact@v4
+        with:
+          name: trivy-results
+          path: artifacts/
+        # continue-on-error means if Trivy job failed and
+        # saved no artifact, this step skips rather than
+        # crashing the entire ingestion job
+        continue-on-error: true
+
+      # Download Semgrep SARIF artifact saved by the SAST job
+      - name: Download Semgrep results
+        uses: actions/download-artifact@v4
+        with:
+          name: semgrep-results
+          path: artifacts/
+        continue-on-error: true
+
+      # Install Python requests library on the runner
+      # The Ubuntu runner has Python pre-installed
+      # but requests is not a built-in library
+      - name: Install dependencies
+        run: pip install requests
+
+      # Run Trivy ingestion script if the artifact exists
+      # The if condition checks the file is there before running
+      # -f means "file exists" in bash
+      - name: Ingest Trivy findings into Splunk
+        run: |
+          if [ -f artifacts/trivy-results.json ]; then
+            python3 splunk/ingest_trivy.py \
+              artifacts/trivy-results.json \
+              ${{ secrets.SPLUNK_HEC_URL }} \
+              ${{ secrets.SPLUNK_HEC_TOKEN }}
+          else
+            echo "No Trivy results artifact found — skipping"
+          fi
+
+      # Run Semgrep ingestion script if the artifact exists
+      - name: Ingest Semgrep findings into Splunk
+        run: |
+          if [ -f artifacts/semgrep.sarif ]; then
+            python3 splunk/ingest_semgrep.py \
+              artifacts/semgrep.sarif \
+              ${{ secrets.SPLUNK_HEC_URL }} \
+              ${{ secrets.SPLUNK_HEC_TOKEN }}
+          else
+            echo "No Semgrep results artifact found — skipping"
+          fi            
