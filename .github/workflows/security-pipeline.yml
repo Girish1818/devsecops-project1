@@ -279,3 +279,40 @@ jobs:
           else
             echo "No Semgrep results artifact found — skipping"
           fi            
+
+# ─────────────────────────────────────────────
+  # JOB 8: SOAR playbook
+  # Runs when CRITICAL CVEs are found
+  # Pages SPOC and creates GitHub Issues
+  # automatically — no human intervention needed
+  # ─────────────────────────────────────────────
+  soar-playbook:
+    name: SOAR — auto-response
+    runs-on: ubuntu-latest
+    needs: [sca]
+    if: always()
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download Trivy results
+        uses: actions/download-artifact@v4
+        with:
+          name: trivy-results
+          path: artifacts/
+        continue-on-error: true
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Run SOAR playbook
+        run: |
+          if [ -f artifacts/trivy-results.json ]; then
+            python3 splunk/soar_playbook.py \
+              artifacts/trivy-results.json \
+              ${{ secrets.SPOC_REST_URL }} \
+              ${{ secrets.GITHUB_PAT }}
+          else
+            echo "No Trivy results found — skipping SOAR"
+          fi          
