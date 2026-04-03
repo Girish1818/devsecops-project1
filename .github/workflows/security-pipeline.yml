@@ -310,9 +310,9 @@ jobs:
         run: |
           if [ -f artifacts/trivy-results.json ]; then
             python3 splunk/soar_playbook.py \
-              artifacts/trivy-results.json \
-              ${{ secrets.SPOC_REST_URL }} \
-              ${{ secrets.GITHUB_PAT }}
+              "artifacts/trivy-results.json" \
+              "${{ secrets.SPOC_REST_URL }}" \
+              "${{ secrets.GITHUB_PAT }}"
           else
             echo "No Trivy results found — skipping SOAR"
-          fi          
+          fi       
