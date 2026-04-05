@@ -6,7 +6,7 @@
 # is a security decision, not just a technical preference.
 # slim means it excludes compilers and dev tools — smaller attack surface
 # than the full python:3.9 image, but still has vulnerabilities.
-FROM python:3.12-slim
+FROM python:3.9-slim
 
 # WORKDIR — sets the working directory inside the container
 # All commands after this run from /app inside the container.
