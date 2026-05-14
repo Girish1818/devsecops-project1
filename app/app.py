@@ -77,7 +77,7 @@ def run_command():
 
     # shlex.split safely tokenises the command string into a list
     # shell=False means each token is passed as a literal argument
-   result = subprocess.run(  # nosemgrep: python.flask.security.injection.subprocess-injection.subprocess-injection,python.lang.security.dangerous-subprocess-use.dangerous-subprocess-use
+    result = subprocess.run(  # nosemgrep: python.flask.security.injection.subprocess-injection.subprocess-injection,python.lang.security.dangerous-subprocess-use.dangerous-subprocess-use
         shlex.split(cmd),
         shell=False,
         capture_output=True,
@@ -91,4 +91,4 @@ if __name__ == "__main__":
     # debug=False — no interactive debugger in production
     # In production this file is not called directly — a WSGI server
     # like gunicorn runs the app. This block is for local dev only.
-    app.run(host="127.0.0.1", port=5000, debug=False)
+    app.run(host="0.0.0.0", port=5000, debug=False)
