@@ -13,6 +13,7 @@ spec:
       labels:
         app: flask-app
     spec:
+      serviceAccountName: flask-app-sa
       containers:
         - name: flask-app
           image: flask-app:local
