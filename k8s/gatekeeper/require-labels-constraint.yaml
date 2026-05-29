@@ -1,0 +1,16 @@
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: RequireLabels
+metadata:
+  name: require-security-labels
+spec:
+  enforcementAction: warn
+  match:
+    kinds:
+      - apiGroups: ["apps"]
+        kinds: ["Deployment"]
+    namespaces: ["flask-app"]
+  parameters:
+    labels:
+      - "app"
+      - "environment"
+      - "team"

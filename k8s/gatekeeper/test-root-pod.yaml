@@ -1,0 +1,20 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: test-root
+  namespace: flask-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: test-root
+  template:
+    metadata:
+      labels:
+        app: test-root
+    spec:
+      containers:
+        - name: test-root
+          image: nginx:latest
+          securityContext:
+            runAsNonRoot: false
