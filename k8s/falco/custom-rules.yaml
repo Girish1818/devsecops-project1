@@ -1,0 +1,55 @@
+- rule: Vault Secret File Read by Unexpected Process
+  desc: >
+    Detects when a process other than Python reads the Vault-injected
+    secret file. Only the Flask app should access /vault/secrets/config.
+  condition: >
+    open_read
+    and container
+    and container.image.repository = "flask-app"
+    and fd.name = "/vault/secrets/config"
+    and not proc.name in (python3, python, sh)
+  output: >
+    Vault secret file read by unexpected process
+    (proc=%proc.name pid=%proc.pid file=%fd.name
+    pod=%k8s.pod.name ns=%k8s.ns.name user=%user.name)
+  priority: CRITICAL
+  tags: [flask-app, vault, secret-access, custom]
+
+- rule: Suspicious Outbound Connection from Flask
+  desc: >
+    Detects outbound network connections from the Flask container
+    to unexpected destinations. Flask should only connect to Vault
+    and AWS Secrets Manager.
+  condition: >
+    outbound
+    and container
+    and container.image.repository = "flask-app"
+    and not fd.sip.name in (vault.vault.svc.cluster.local)
+    and not fd.sport in (443, 53)
+  output: >
+    Unexpected outbound connection from Flask container
+    (proc=%proc.name pid=%proc.pid
+    dest=%fd.rip:%fd.rport
+    pod=%k8s.pod.name ns=%k8s.ns.name)
+  priority: WARNING
+  tags: [flask-app, network, exfiltration, custom]
+
+- rule: Shell Spawned in Flask Container
+  desc: >
+    Detects any shell execution inside the Flask container.
+    Flask app should never spawn interactive shells.
+    This is a more specific version of the default rule,
+    targeting only our Flask container.
+  condition: >
+    spawned_process
+    and container
+    and container.image.repository = "flask-app"
+    and proc.name in (sh, bash, dash, zsh)
+  output: >
+    Shell spawned in Flask container - possible compromise
+    (shell=%proc.name pid=%proc.pid
+    parent=%proc.pname
+    pod=%k8s.pod.name ns=%k8s.ns.name
+    user=%user.name)
+  priority: CRITICAL
+  tags: [flask-app, shell, T1059, custom]

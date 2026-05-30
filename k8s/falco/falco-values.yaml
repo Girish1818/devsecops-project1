@@ -1,0 +1,17 @@
+driver:
+  kind: modern_ebpf
+
+falcosidekick:
+  enabled: true
+  config:
+    customfields: "cluster:minikube"
+
+mounts:
+  volumes:
+    - name: custom-rules
+      configMap:
+        name: falco-custom-rules
+  volumeMounts:
+    - name: custom-rules
+      mountPath: /etc/falco/rules.d/custom-rules.yaml
+      subPath: custom-rules.yaml
