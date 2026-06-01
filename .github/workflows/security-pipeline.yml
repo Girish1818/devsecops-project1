@@ -208,13 +208,17 @@ jobs:
             --query 'imageDetails[*].{tags:imageTags,pushed:imagePushedAt}' \
             --output table
 
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3
+
       - name: Sign image with Cosign
         env:
           COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
         run: |
           echo "${{ secrets.COSIGN_KEY }}" > cosign.key
           cosign sign --key cosign.key \
-            ${{ secrets.ECR_REGISTRY }}/devsecops-project1:${{ github.sha }}
+            --yes \
+            ${{ steps.login-ecr.outputs.registry }}/devsecops-project1:${{ github.sha }}
           rm cosign.key
 
       - name: Generate SBOM
@@ -222,13 +226,13 @@ jobs:
           trivy image \
             --format cyclonedx \
             --output sbom.json \
-            ${{ secrets.ECR_REGISTRY }}/devsecops-project1:${{ github.sha }}
+            ${{ steps.login-ecr.outputs.registry }}/devsecops-project1:${{ github.sha }}
 
       - name: Upload SBOM as artifact
         uses: actions/upload-artifact@v4
         with:
           name: sbom
-          path: sbom.json      
+          path: sbom.json    
 
   
 
