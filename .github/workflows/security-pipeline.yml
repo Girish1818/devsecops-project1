@@ -53,7 +53,7 @@ jobs:
       - name: Enforce Semgrep gate
         run: |
           pip install semgrep
-          semgrep --config=auto --error app/ || true
+          semgrep --config=auto --error app/ 
 
   # ─────────────────────────────────────────────
   # JOB 2: SCA — Trivy
