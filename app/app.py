@@ -13,17 +13,30 @@ app = Flask(__name__)
 # 2. CI/CD: OIDC temporary credentials from GitHub Actions
 # 3. Fallback: environment variable for local dev without AWS
 def get_secret(secret_name: str, region: str = "us-east-1") -> str:
-    client = boto3.client("secretsmanager", region_name=region)
+    # First try Vault-injected file
+    # Vault Agent Injector writes secrets to /vault/secrets/
+    # This is the preferred method in K8s — no AWS credentials needed
+    vault_secret_path = "/vault/secrets/config"
     try:
+        with open(vault_secret_path, 'r') as f:
+            secret = f.read().strip()
+            if secret:
+                print("Secret loaded from Vault-injected file")
+                return secret
+    except FileNotFoundError:
+        pass
+
+    # Fallback to AWS Secrets Manager (when running outside K8s)
+    try:
+        client = boto3.client("secretsmanager", region_name=region)
         response = client.get_secret_value(SecretId=secret_name)
+        print("Secret loaded from AWS Secrets Manager")
         return response["SecretString"]
     except Exception as e:
         print(f"Warning: Could not fetch secret from AWS: {e}")
         fallback = os.environ.get("FLASK_SECRET_KEY", "local-dev-only-not-for-production")
         print("Using fallback secret — DO NOT use in production")
         return fallback
-
-app.secret_key = get_secret("devsecops-project1/flask-secret-key")
 
 def get_db():
     if "db" not in g:
