@@ -208,6 +208,30 @@ jobs:
             --query 'imageDetails[*].{tags:imageTags,pushed:imagePushedAt}' \
             --output table
 
+      - name: Sign image with Cosign
+        env:
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+        run: |
+          echo "${{ secrets.COSIGN_KEY }}" > cosign.key
+          cosign sign --key cosign.key \
+            ${{ secrets.ECR_REGISTRY }}/devsecops-project1:${{ github.sha }}
+          rm cosign.key
+
+      - name: Generate SBOM
+        run: |
+          trivy image \
+            --format cyclonedx \
+            --output sbom.json \
+            ${{ secrets.ECR_REGISTRY }}/devsecops-project1:${{ github.sha }}
+
+      - name: Upload SBOM as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom.json      
+
+  
+
   # ─────────────────────────────────────────────
   # JOB 7: Splunk ingestion
   # Downloads scanner artifacts and sends findings
